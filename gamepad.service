@@ -1,0 +1,16 @@
+[Unit]
+Description=Touch Gamepad Virtual Controller Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/repos/touch-gamepad
+ExecStart=/usr/bin/python3 %h/repos/touch-gamepad/server.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+Environment=HTTP_PORT=8765
+Environment=WS_PORT=8766
+
+[Install]
+WantedBy=default.target
