@@ -185,7 +185,6 @@ elif SYSTEM == "Darwin":
             evt = c.CGEventCreateKeyboardEvent(None, code, is_down)
             if evt:
                 c.CGEventPost(0, evt)  # kCGHIDEventTap
-                c.CGEventPost(1, evt)  # kCGSessionEventTap
                 cf.CFRelease(evt)
 
     class PlayerGamepad:
@@ -197,6 +196,7 @@ elif SYSTEM == "Darwin":
             print(f"[GAMEPAD-MAC] Player {slot} connected (Keyboard emulation)")
 
         def handle_button(self, key, is_down):
+            print(f"[KEY-MAC] {key} down={is_down}", flush=True)
             if is_down:
                 if key in self.release_timers:
                     self.release_timers[key].cancel()
@@ -283,6 +283,7 @@ html, body {{
     width: 100vw;
     overflow: hidden;
     position: fixed;
+    overscroll-behavior: none;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -635,8 +636,10 @@ function emit(msg) {{
 
 function emitKey(key, down) {{
     emit({{ key, down }});
-    if (down && navigator.vibrate) {{
-        navigator.vibrate(12);
+    if (down) {{
+        try {{
+            if (navigator.vibrate) navigator.vibrate(12);
+        }} catch(err) {{}}
     }}
 }}
 
@@ -652,9 +655,12 @@ function emitStick(x, y) {{
         return;
     }}
     const now = performance.now();
+    if (now - lastStickTime < 33) {{
+        return;
+    }}
     const dx = Math.abs(x - lastStickX);
     const dy = Math.abs(y - lastStickY);
-    if (now - lastStickTime < 33 && dx < 0.08 && dy < 0.08) {{
+    if (dx < 0.04 && dy < 0.04) {{
         return;
     }}
     lastStickTime = now;
@@ -698,11 +704,10 @@ function toggleMode(e) {{
     }}
     const newMode = (currentMode === 'dpad') ? 'stick' : 'dpad';
     setLeftMode(newMode);
-    if (navigator.vibrate) navigator.vibrate(20);
+    try {{ if (navigator.vibrate) navigator.vibrate(20); }} catch(err) {{}}
 }}
 
-modeBtn.addEventListener('click', toggleMode);
-modeBtn.addEventListener('touchend', toggleMode);
+modeBtn.addEventListener('pointerdown', toggleMode);
 setLeftMode(currentMode);
 
 const activeTouches = new Map();
@@ -749,13 +754,25 @@ window.addEventListener('touchmove', (e) => {{
         }} else if (activeTouches.has(t.identifier)) {{
             const entry = activeTouches.get(t.identifier);
             const btn = getKeyElementFromPoint(t.clientX, t.clientY);
-            if (btn && btn !== entry.btn) {{
+            if (btn !== entry.btn) {{
                 entry.btn.classList.remove('active');
                 emitKey(entry.key, false);
-                const newKey = btn.getAttribute('data-key');
+                if (btn) {{
+                    const newKey = btn.getAttribute('data-key');
+                    btn.classList.add('active');
+                    activeTouches.set(t.identifier, {{ key: newKey, btn }});
+                    emitKey(newKey, true);
+                }} else {{
+                    activeTouches.delete(t.identifier);
+                }}
+            }}
+        }} else {{
+            const btn = getKeyElementFromPoint(t.clientX, t.clientY);
+            if (btn) {{
+                const key = btn.getAttribute('data-key');
                 btn.classList.add('active');
-                activeTouches.set(t.identifier, {{ key: newKey, btn }});
-                emitKey(newKey, true);
+                activeTouches.set(t.identifier, {{ key, btn }});
+                emitKey(key, true);
             }}
         }}
     }}
@@ -1026,8 +1043,8 @@ async def start_ws():
         ws_handler,
         "0.0.0.0",
         WS_PORT,
-        ping_interval=20,
-        ping_timeout=30,
+        ping_interval=None,
+        ping_timeout=None,
         max_size=2**16
     ):
         await asyncio.Future()
