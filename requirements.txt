@@ -1,2 +1,2 @@
-evdev>=1.6.0
+evdev>=1.6.0; sys_platform == 'linux'
 websockets>=12.0

@@ -38,7 +38,8 @@ LOCAL_URL = f"http://{LOCAL_IP}:{HTTP_PORT}"
 MDNS_URL = f"http://{HOSTNAME}.local:{HTTP_PORT}"
 
 # Generate QR code png
-QR_PATH = "/tmp/gamepad_qr.png"
+import tempfile
+QR_PATH = os.path.join(tempfile.gettempdir(), f"gamepad_qr_{os.getuid() if hasattr(os, 'getuid') else '0'}.png")
 def generate_qr():
     try:
         subprocess.run(["qrencode", "-o", QR_PATH, "-s", "8", "-m", "2", LOCAL_URL], check=True)
@@ -143,6 +144,13 @@ if SYSTEM == "Linux":
 
         def close(self):
             print(f"[GAMEPAD] Player {self.slot} disconnected")
+            for btn in BUTTON_MAP.values():
+                self.ui.write(ecodes.EV_KEY, btn, 0)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, 0)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, 0)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0X, 0)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0Y, 0)
+            self.ui.syn()
             self.ui.close()
 
 elif SYSTEM == "Darwin":
@@ -199,8 +207,8 @@ elif SYSTEM == "Darwin":
             print(f"[KEY-MAC] {key} down={is_down}", flush=True)
             if is_down:
                 if key in self.release_timers:
-                    self.release_timers[key].cancel()
-                    del self.release_timers[key]
+                    timer = self.release_timers.pop(key)
+                    timer.cancel()
                     mac_send_key(key, False)
                 self.press_times[key] = time.time()
                 mac_send_key(key, True)
@@ -208,14 +216,20 @@ elif SYSTEM == "Darwin":
                 elapsed = time.time() - self.press_times.get(key, 0)
                 min_hold = 0.08  # 80ms min hold for emulator frame sampling
                 if elapsed < min_hold:
-                    t = threading.Timer(min_hold - elapsed, self._delayed_release, args=[key])
+                    try:
+                        loop = asyncio.get_running_loop()
+                        t = loop.call_later(min_hold - elapsed, self._delayed_release, key)
+                    except RuntimeError:
+                        t = threading.Timer(min_hold - elapsed, self._delayed_release, args=[key])
+                        t.start()
                     self.release_timers[key] = t
-                    t.start()
                 else:
+                    self.press_times.pop(key, None)
                     mac_send_key(key, False)
 
         def _delayed_release(self, key):
             self.release_timers.pop(key, None)
+            self.press_times.pop(key, None)
             mac_send_key(key, False)
 
         def handle_stick(self, x, y):
@@ -228,17 +242,10 @@ elif SYSTEM == "Darwin":
                 'lup': cy < -thresh,
                 'ldown': cy > thresh
             }
-            dpad_mirror = {
-                'lleft': 'left',
-                'lright': 'right',
-                'lup': 'up',
-                'ldown': 'down'
-            }
             for d, state in dirs.items():
                 if state != self.analog_state[d]:
                     self.analog_state[d] = state
                     mac_send_key(d, state)
-                    mac_send_key(dpad_mirror[d], state)
 
         def close(self):
             for t in list(self.release_timers.values()):
@@ -247,11 +254,10 @@ elif SYSTEM == "Darwin":
             for k in list(self.press_times.keys()):
                 mac_send_key(k, False)
             self.press_times.clear()
-            dpad_mirror = {'lleft': 'left', 'lright': 'right', 'lup': 'up', 'ldown': 'down'}
             for d in list(self.analog_state.keys()):
                 if self.analog_state[d]:
                     mac_send_key(d, False)
-                    mac_send_key(dpad_mirror[d], False)
+                    self.analog_state[d] = False
             print(f"[GAMEPAD-MAC] Player {self.slot} disconnected")
 
 available_slots = [1, 2, 3, 4]
@@ -654,13 +660,13 @@ function emitStick(x, y) {{
         emit({{ type: 'stick', x: 0, y: 0 }});
         return;
     }}
-    const now = performance.now();
-    if (now - lastStickTime < 33) {{
-        return;
-    }}
     const dx = Math.abs(x - lastStickX);
     const dy = Math.abs(y - lastStickY);
     if (dx < 0.04 && dy < 0.04) {{
+        return;
+    }}
+    const now = performance.now();
+    if (now - lastStickTime < 33 && dx < 0.2 && dy < 0.2) {{
         return;
     }}
     lastStickTime = now;
@@ -846,8 +852,7 @@ function toggleFS(e) {{
         fsBtn.textContent = 'Pantalla Completa';
     }}
 }}
-fsBtn.addEventListener('click', toggleFS);
-fsBtn.addEventListener('touchend', toggleFS);
+fsBtn.addEventListener('pointerdown', toggleFS);
 </script>
 </body>
 </html>
@@ -981,6 +986,13 @@ def start_http():
     print(f"[HTTP] Listening on http://0.0.0.0:{HTTP_PORT}")
     httpd.serve_forever()
 
+VALID_BUTTONS = {
+    'up', 'down', 'left', 'right',
+    'triangle', 'circle', 'cross', 'square',
+    'l1', 'r1', 'l2', 'r2', 'l3', 'r3',
+    'select', 'start'
+}
+
 async def ws_handler(websocket):
     client_ip = websocket.remote_address[0] if websocket.remote_address else "unknown"
     slot = None
@@ -1019,11 +1031,14 @@ async def ws_handler(websocket):
                 data = json.loads(message)
                 mtype = data.get("type")
                 if mtype == "stick":
-                    player.handle_stick(data.get("x", 0), data.get("y", 0))
+                    x = data.get("x", 0)
+                    y = data.get("y", 0)
+                    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                        player.handle_stick(x, y)
                 else:
                     key = data.get("key")
-                    down = data.get("down", False)
-                    if key:
+                    down = bool(data.get("down", False))
+                    if key in VALID_BUTTONS:
                         player.handle_button(key, down)
             except Exception as e:
                 print(f"[WS JSON ERR] P{slot}: {e}")
@@ -1043,8 +1058,8 @@ async def start_ws():
         ws_handler,
         "0.0.0.0",
         WS_PORT,
-        ping_interval=None,
-        ping_timeout=None,
+        ping_interval=20,
+        ping_timeout=60,
         max_size=2**16
     ):
         await asyncio.Future()
