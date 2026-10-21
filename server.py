@@ -149,40 +149,36 @@ elif SYSTEM == "Darwin":
     c = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
     c.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
     c.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
-    c.CGEventKeyboardSetUnicodeString.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_uint16)]
     c.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
 
     MAC_KEY_MAP = {
-        'up': (126, None),
-        'down': (125, None),
-        'left': (123, None),
-        'right': (124, None),
-        'triangle': (34, 'i'),
-        'circle': (37, 'l'),
-        'cross': (40, 'k'),
-        'square': (38, 'j'),
-        'l1': (12, 'q'),
-        'r1': (14, 'e'),
-        'l2': (18, '1'),
-        'r2': (20, '3'),
-        'l3': (19, '2'),
-        'r3': (21, '4'),
-        'select': (51, '\b'),
-        'start': (36, '\r'),
-        'lup': (13, 'w'),
-        'ldown': (1, 's'),
-        'lleft': (0, 'a'),
-        'lright': (2, 'd')
+        'up': 126,        # Up Arrow
+        'down': 125,      # Down Arrow
+        'left': 123,      # Left Arrow
+        'right': 124,     # Right Arrow
+        'triangle': 34,   # I
+        'circle': 37,     # L
+        'cross': 40,      # K
+        'square': 38,     # J
+        'l1': 12,         # Q
+        'r1': 14,         # E
+        'l2': 18,         # 1
+        'r2': 20,         # 3
+        'l3': 19,         # 2
+        'r3': 21,         # 4
+        'select': 51,     # Backspace
+        'start': 36,      # Return
+        'lup': 13,        # W
+        'ldown': 1,       # S
+        'lleft': 0,       # A
+        'lright': 2       # D
     }
 
     def mac_send_key(key_name, is_down):
         if key_name in MAC_KEY_MAP:
-            code, char = MAC_KEY_MAP[key_name]
+            code = MAC_KEY_MAP[key_name]
             evt = c.CGEventCreateKeyboardEvent(None, code, is_down)
             if evt:
-                if char:
-                    char_arr = (ctypes.c_uint16 * 1)(ord(char))
-                    c.CGEventKeyboardSetUnicodeString(evt, 1, char_arr)
                 c.CGEventPost(0, evt)
 
     class PlayerGamepad:
@@ -192,6 +188,7 @@ elif SYSTEM == "Darwin":
             print(f"[GAMEPAD-MAC] Player {slot} connected (Keyboard emulation)")
 
         def handle_button(self, key, is_down):
+            print(f"[BUTTON MAC] key={key} down={is_down}", flush=True)
             mac_send_key(key, is_down)
 
         def handle_stick(self, x, y):
