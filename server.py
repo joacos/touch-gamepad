@@ -204,15 +204,24 @@ elif SYSTEM == "Darwin":
                 'lup': cy < -thresh,
                 'ldown': cy > thresh
             }
+            dpad_mirror = {
+                'lleft': 'left',
+                'lright': 'right',
+                'lup': 'up',
+                'ldown': 'down'
+            }
             for d, state in dirs.items():
                 if state != self.analog_state[d]:
                     self.analog_state[d] = state
                     mac_send_key(d, state)
+                    mac_send_key(dpad_mirror[d], state)
 
         def close(self):
+            dpad_mirror = {'lleft': 'left', 'lright': 'right', 'lup': 'up', 'ldown': 'down'}
             for d in list(self.analog_state.keys()):
                 if self.analog_state[d]:
                     mac_send_key(d, False)
+                    mac_send_key(dpad_mirror[d], False)
             print(f"[GAMEPAD-MAC] Player {self.slot} disconnected")
 
 available_slots = [1, 2, 3, 4]
@@ -329,10 +338,26 @@ html, body {{
     align-items: center;
     padding: 8px 32px 20px 32px;
 }}
+.left-zone {{
+    position: relative;
+    width: 170px;
+    height: 170px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}}
 .dpad {{
     position: relative;
     width: 170px;
     height: 170px;
+}}
+.analog-view {{
+    position: relative;
+    width: 170px;
+    height: 170px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }}
 .dpad-btn {{
     position: absolute;
@@ -363,7 +388,47 @@ html, body {{
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 14px;
+    gap: 16px;
+}}
+.mode-toggle-btn {{
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 20px;
+    padding: 7px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+}}
+.mode-toggle-btn:active {{
+    background: rgba(255,255,255,0.15);
+    transform: scale(0.96);
+}}
+.mode-led {{
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #334155;
+    transition: all 0.2s ease;
+}}
+.mode-led.on {{
+    background: #ef4444;
+    box-shadow: 0 0 10px #ef4444, 0 0 4px #f87171;
+}}
+.mode-state {{
+    font-size: 11px;
+    color: #94a3b8;
+    font-weight: 700;
+}}
+.mode-led.on ~ .mode-state {{
+    color: #f87171;
 }}
 .menu-btn-group {{
     display: flex;
@@ -384,10 +449,10 @@ html, body {{
     letter-spacing: 1px;
 }}
 .analog-area {{
-    width: 130px;
-    height: 130px;
-    background: rgba(255,255,255,0.03);
-    border: 2px dashed rgba(255,255,255,0.12);
+    width: 154px;
+    height: 154px;
+    background: radial-gradient(circle, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 70%, transparent 100%);
+    border: 2px dashed rgba(255,255,255,0.18);
     border-radius: 50%;
     position: relative;
     display: flex;
@@ -395,12 +460,13 @@ html, body {{
     justify-content: center;
 }}
 .analog-knob {{
-    width: 60px;
-    height: 60px;
-    background: radial-gradient(circle, #38bdf8 0%, #0284c7 100%);
+    width: 64px;
+    height: 64px;
+    background: radial-gradient(circle at 35% 35%, #38bdf8 0%, #0284c7 60%, #0369a1 100%);
+    border: 2px solid rgba(255,255,255,0.3);
     border-radius: 50%;
     position: absolute;
-    box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);
+    box-shadow: 0 6px 18px rgba(2, 132, 199, 0.45);
     pointer-events: none;
     transition: transform 0.04s ease-out;
 }}
@@ -457,21 +523,30 @@ html, body {{
 </div>
 
 <div class="main-area">
-    <div class="dpad">
-        <div class="dpad-btn dpad-up" data-key="up">▲</div>
-        <div class="dpad-btn dpad-left" data-key="left">◀</div>
-        <div class="dpad-center"></div>
-        <div class="dpad-btn dpad-right" data-key="right">▶</div>
-        <div class="dpad-btn dpad-down" data-key="down">▼</div>
+    <div class="left-zone" id="left-zone">
+        <div class="dpad" id="dpad-view">
+            <div class="dpad-btn dpad-up" data-key="up">▲</div>
+            <div class="dpad-btn dpad-left" data-key="left">◀</div>
+            <div class="dpad-center"></div>
+            <div class="dpad-btn dpad-right" data-key="right">▶</div>
+            <div class="dpad-btn dpad-down" data-key="down">▼</div>
+        </div>
+        <div class="analog-view" id="analog-view" style="display: none;">
+            <div class="analog-area" id="analog">
+                <div class="analog-knob" id="knob"></div>
+            </div>
+        </div>
     </div>
 
     <div class="center-controls">
+        <button class="mode-toggle-btn" id="mode-btn">
+            <span class="mode-led" id="mode-led"></span>
+            <span>ANALOG</span>
+            <span class="mode-state" id="mode-state">FLECHAS</span>
+        </button>
         <div class="menu-btn-group">
             <div class="menu-btn" data-key="select">SELECT</div>
             <div class="menu-btn" data-key="start">START</div>
-        </div>
-        <div class="analog-area" id="analog">
-            <div class="analog-knob" id="knob"></div>
         </div>
     </div>
 
@@ -539,10 +614,49 @@ function emitStick(x, y) {{
     emit({{ type: 'stick', x, y }});
 }}
 
-const activeTouches = new Map();
+let currentMode = localStorage.getItem('gamepad_control_mode') || 'dpad';
+const dpadView = document.getElementById('dpad-view');
+const analogView = document.getElementById('analog-view');
+const modeBtn = document.getElementById('mode-btn');
+const modeLed = document.getElementById('mode-led');
+const modeState = document.getElementById('mode-state');
 const analog = document.getElementById('analog');
 const knob = document.getElementById('knob');
 let analogTouchId = null;
+
+function setLeftMode(mode) {{
+    currentMode = mode;
+    if (mode === 'stick') {{
+        dpadView.style.display = 'none';
+        analogView.style.display = 'flex';
+        modeLed.classList.add('on');
+        modeState.textContent = 'STICK';
+        ['up', 'down', 'left', 'right'].forEach(k => emitKey(k, false));
+    }} else {{
+        dpadView.style.display = 'block';
+        analogView.style.display = 'none';
+        modeLed.classList.remove('on');
+        modeState.textContent = 'FLECHAS';
+        resetAnalog();
+    }}
+    localStorage.setItem('gamepad_control_mode', mode);
+}}
+
+function toggleMode(e) {{
+    if (e) {{
+        e.preventDefault();
+        e.stopPropagation();
+    }}
+    const newMode = (currentMode === 'dpad') ? 'stick' : 'dpad';
+    setLeftMode(newMode);
+    if (navigator.vibrate) navigator.vibrate(20);
+}}
+
+modeBtn.addEventListener('click', toggleMode);
+modeBtn.addEventListener('touchend', toggleMode);
+setLeftMode(currentMode);
+
+const activeTouches = new Map();
 
 function getKeyElementFromPoint(x, y) {{
     const el = document.elementFromPoint(x, y);
@@ -551,16 +665,19 @@ function getKeyElementFromPoint(x, y) {{
 }}
 
 window.addEventListener('touchstart', (e) => {{
-    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn')) return;
+    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn') || e.target.closest('#mode-btn')) return;
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {{
         const t = e.changedTouches[i];
-        const aRect = analog.getBoundingClientRect();
-        if (t.clientX >= aRect.left && t.clientX <= aRect.right &&
-            t.clientY >= aRect.top && t.clientY <= aRect.bottom) {{
-            analogTouchId = t.identifier;
-            handleAnalogMove(t);
-            continue;
+
+        if (currentMode === 'stick') {{
+            const aRect = analog.getBoundingClientRect();
+            if (t.clientX >= aRect.left && t.clientX <= aRect.right &&
+                t.clientY >= aRect.top && t.clientY <= aRect.bottom) {{
+                analogTouchId = t.identifier;
+                handleAnalogMove(t);
+                continue;
+            }}
         }}
 
         const btn = getKeyElementFromPoint(t.clientX, t.clientY);
@@ -574,7 +691,7 @@ window.addEventListener('touchstart', (e) => {{
 }}, {{ passive: false }});
 
 window.addEventListener('touchmove', (e) => {{
-    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn')) return;
+    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn') || e.target.closest('#mode-btn')) return;
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {{
         const t = e.changedTouches[i];
@@ -585,7 +702,7 @@ window.addEventListener('touchmove', (e) => {{
 }}, {{ passive: false }});
 
 function handleEnd(e) {{
-    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn')) return;
+    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn') || e.target.closest('#mode-btn')) return;
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {{
         const t = e.changedTouches[i];
