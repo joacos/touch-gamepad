@@ -3,6 +3,7 @@ import asyncio
 import json
 import http.server
 import threading
+import time
 import os
 import sys
 import platform
@@ -179,17 +180,39 @@ elif SYSTEM == "Darwin":
             code = MAC_KEY_MAP[key_name]
             evt = c.CGEventCreateKeyboardEvent(None, code, is_down)
             if evt:
-                c.CGEventPost(0, evt)
+                c.CGEventPost(0, evt)  # kCGHIDEventTap
+                c.CGEventPost(1, evt)  # kCGSessionEventTap
 
     class PlayerGamepad:
         def __init__(self, slot):
             self.slot = slot
             self.analog_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
+            self.press_times = {}
+            self.release_timers = {}
             print(f"[GAMEPAD-MAC] Player {slot} connected (Keyboard emulation)")
 
         def handle_button(self, key, is_down):
-            print(f"[BUTTON MAC] key={key} down={is_down}", flush=True)
-            mac_send_key(key, is_down)
+            if is_down:
+                if key in self.release_timers:
+                    self.release_timers[key].cancel()
+                    del self.release_timers[key]
+                    mac_send_key(key, False)
+                    time.sleep(0.01)
+                self.press_times[key] = time.time()
+                mac_send_key(key, True)
+            else:
+                elapsed = time.time() - self.press_times.get(key, 0)
+                min_hold = 0.09  # 90ms min duration for emulator frame polling
+                if elapsed < min_hold:
+                    t = threading.Timer(min_hold - elapsed, self._delayed_release, args=[key])
+                    self.release_timers[key] = t
+                    t.start()
+                else:
+                    mac_send_key(key, False)
+
+        def _delayed_release(self, key):
+            self.release_timers.pop(key, None)
+            mac_send_key(key, False)
 
         def handle_stick(self, x, y):
             cx = max(-1.0, min(1.0, float(x)))
@@ -214,6 +237,12 @@ elif SYSTEM == "Darwin":
                     mac_send_key(dpad_mirror[d], state)
 
         def close(self):
+            for t in list(self.release_timers.values()):
+                t.cancel()
+            self.release_timers.clear()
+            for k in list(self.press_times.keys()):
+                mac_send_key(k, False)
+            self.press_times.clear()
             dpad_mirror = {'lleft': 'left', 'lright': 'right', 'lup': 'up', 'ldown': 'down'}
             for d in list(self.analog_state.keys()):
                 if self.analog_state[d]:
