@@ -148,9 +148,13 @@ if SYSTEM == "Linux":
 elif SYSTEM == "Darwin":
     import ctypes
     c = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+    cf = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
     c.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
     c.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
     c.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    c.CGEventPost.restype = None
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    cf.CFRelease.restype = None
 
     MAC_KEY_MAP = {
         'up': 126,        # Up Arrow
@@ -182,6 +186,7 @@ elif SYSTEM == "Darwin":
             if evt:
                 c.CGEventPost(0, evt)  # kCGHIDEventTap
                 c.CGEventPost(1, evt)  # kCGSessionEventTap
+                cf.CFRelease(evt)
 
     class PlayerGamepad:
         def __init__(self, slot):
@@ -197,12 +202,11 @@ elif SYSTEM == "Darwin":
                     self.release_timers[key].cancel()
                     del self.release_timers[key]
                     mac_send_key(key, False)
-                    time.sleep(0.01)
                 self.press_times[key] = time.time()
                 mac_send_key(key, True)
             else:
                 elapsed = time.time() - self.press_times.get(key, 0)
-                min_hold = 0.09  # 90ms min duration for emulator frame polling
+                min_hold = 0.08  # 80ms min hold for emulator frame sampling
                 if elapsed < min_hold:
                     t = threading.Timer(min_hold - elapsed, self._delayed_release, args=[key])
                     self.release_timers[key] = t
@@ -636,8 +640,27 @@ function emitKey(key, down) {{
     }}
 }}
 
+let lastStickTime = 0;
+let lastStickX = 0;
+let lastStickY = 0;
+
 function emitStick(x, y) {{
-    emit({{ type: 'stick', x, y }});
+    if (x === 0 && y === 0) {{
+        lastStickX = 0;
+        lastStickY = 0;
+        emit({{ type: 'stick', x: 0, y: 0 }});
+        return;
+    }}
+    const now = performance.now();
+    const dx = Math.abs(x - lastStickX);
+    const dy = Math.abs(y - lastStickY);
+    if (now - lastStickTime < 33 && dx < 0.08 && dy < 0.08) {{
+        return;
+    }}
+    lastStickTime = now;
+    lastStickX = x;
+    lastStickY = y;
+    emit({{ type: 'stick', x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 }});
 }}
 
 let currentMode = localStorage.getItem('gamepad_control_mode') || 'dpad';
@@ -723,6 +746,17 @@ window.addEventListener('touchmove', (e) => {{
         const t = e.changedTouches[i];
         if (t.identifier === analogTouchId) {{
             handleAnalogMove(t);
+        }} else if (activeTouches.has(t.identifier)) {{
+            const entry = activeTouches.get(t.identifier);
+            const btn = getKeyElementFromPoint(t.clientX, t.clientY);
+            if (btn && btn !== entry.btn) {{
+                entry.btn.classList.remove('active');
+                emitKey(entry.key, false);
+                const newKey = btn.getAttribute('data-key');
+                btn.classList.add('active');
+                activeTouches.set(t.identifier, {{ key: newKey, btn }});
+                emitKey(newKey, true);
+            }}
         }}
     }}
 }}, {{ passive: false }});
@@ -988,7 +1022,14 @@ async def ws_handler(websocket):
 
 async def start_ws():
     print(f"[WS] Listening on ws://0.0.0.0:{WS_PORT}")
-    async with websockets.serve(ws_handler, "0.0.0.0", WS_PORT):
+    async with websockets.serve(
+        ws_handler,
+        "0.0.0.0",
+        WS_PORT,
+        ping_interval=20,
+        ping_timeout=30,
+        max_size=2**16
+    ):
         await asyncio.Future()
 
 def print_banner():
