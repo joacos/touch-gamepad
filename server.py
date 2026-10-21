@@ -159,6 +159,8 @@ elif SYSTEM == "Darwin":
     cf = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
     c.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
     c.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+    c.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+    c.CGEventSetFlags.restype = None
     c.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
     c.CGEventPost.restype = None
     cf.CFRelease.argtypes = [ctypes.c_void_p]
