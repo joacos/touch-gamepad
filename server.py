@@ -5,110 +5,218 @@ import http.server
 import threading
 import os
 import sys
+import platform
+import socket
+import subprocess
 import websockets
-import evdev
-from evdev import ecodes, AbsInfo
 
+SYSTEM = platform.system()  # 'Darwin' (macOS) or 'Linux'
 HTTP_PORT = int(os.environ.get("HTTP_PORT", 8765))
 WS_PORT = int(os.environ.get("WS_PORT", 8766))
 
-# Define virtual Xbox 360 controller capabilities
-GAMEPAD_CAP = {
-    ecodes.EV_KEY: [
-        ecodes.BTN_A, ecodes.BTN_B, ecodes.BTN_X, ecodes.BTN_Y,
-        ecodes.BTN_TL, ecodes.BTN_TR, ecodes.BTN_TL2, ecodes.BTN_TR2,
-        ecodes.BTN_SELECT, ecodes.BTN_START, ecodes.BTN_MODE,
-        ecodes.BTN_THUMBL, ecodes.BTN_THUMBR,
-        ecodes.BTN_DPAD_UP, ecodes.BTN_DPAD_DOWN, ecodes.BTN_DPAD_LEFT, ecodes.BTN_DPAD_RIGHT
-    ],
-    ecodes.EV_ABS: [
-        (ecodes.ABS_X, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
-        (ecodes.ABS_Y, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
-        (ecodes.ABS_RX, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
-        (ecodes.ABS_RY, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
-        (ecodes.ABS_Z, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),
-        (ecodes.ABS_RZ, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),
-        (ecodes.ABS_HAT0X, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),
-        (ecodes.ABS_HAT0Y, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),
-    ]
-}
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        return s.getsockname()[0]
+    except Exception:
+        return '127.0.0.1'
+    finally:
+        s.close()
 
-BUTTON_MAP = {
-    'cross': ecodes.BTN_A,
-    'circle': ecodes.BTN_B,
-    'square': ecodes.BTN_X,
-    'triangle': ecodes.BTN_Y,
-    'l1': ecodes.BTN_TL,
-    'r1': ecodes.BTN_TR,
-    'l2': ecodes.BTN_TL2,
-    'r2': ecodes.BTN_TR2,
-    'select': ecodes.BTN_SELECT,
-    'start': ecodes.BTN_START,
-    'l3': ecodes.BTN_THUMBL,
-    'r3': ecodes.BTN_THUMBR,
-    'up': ecodes.BTN_DPAD_UP,
-    'down': ecodes.BTN_DPAD_DOWN,
-    'left': ecodes.BTN_DPAD_LEFT,
-    'right': ecodes.BTN_DPAD_RIGHT,
-}
+LOCAL_IP = get_ip()
+if SYSTEM == "Darwin":
+    try:
+        HOSTNAME = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
+    except Exception:
+        HOSTNAME = socket.gethostname()
+else:
+    HOSTNAME = socket.gethostname()
 
-# Player slot management (1-4)
+LOCAL_URL = f"http://{LOCAL_IP}:{HTTP_PORT}"
+MDNS_URL = f"http://{HOSTNAME}.local:{HTTP_PORT}"
+
+# Generate QR code png
+QR_PATH = "/tmp/gamepad_qr.png"
+def generate_qr():
+    try:
+        subprocess.run(["qrencode", "-o", QR_PATH, "-s", "8", "-m", "2", LOCAL_URL], check=True)
+    except Exception:
+        pass
+
+generate_qr()
+
+# --- BACKEND IMPLEMENTATIONS ---
+if SYSTEM == "Linux":
+    import evdev
+    from evdev import ecodes, AbsInfo
+
+    GAMEPAD_CAP = {
+        ecodes.EV_KEY: [
+            ecodes.BTN_A, ecodes.BTN_B, ecodes.BTN_X, ecodes.BTN_Y,
+            ecodes.BTN_TL, ecodes.BTN_TR, ecodes.BTN_TL2, ecodes.BTN_TR2,
+            ecodes.BTN_SELECT, ecodes.BTN_START, ecodes.BTN_MODE,
+            ecodes.BTN_THUMBL, ecodes.BTN_THUMBR,
+            ecodes.BTN_DPAD_UP, ecodes.BTN_DPAD_DOWN, ecodes.BTN_DPAD_LEFT, ecodes.BTN_DPAD_RIGHT
+        ],
+        ecodes.EV_ABS: [
+            (ecodes.ABS_X, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
+            (ecodes.ABS_Y, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
+            (ecodes.ABS_RX, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
+            (ecodes.ABS_RY, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
+            (ecodes.ABS_Z, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),
+            (ecodes.ABS_RZ, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),
+            (ecodes.ABS_HAT0X, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),
+            (ecodes.ABS_HAT0Y, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),
+        ]
+    }
+
+    BUTTON_MAP = {
+        'cross': ecodes.BTN_A,
+        'circle': ecodes.BTN_B,
+        'square': ecodes.BTN_X,
+        'triangle': ecodes.BTN_Y,
+        'l1': ecodes.BTN_TL,
+        'r1': ecodes.BTN_TR,
+        'l2': ecodes.BTN_TL2,
+        'r2': ecodes.BTN_TR2,
+        'select': ecodes.BTN_SELECT,
+        'start': ecodes.BTN_START,
+        'l3': ecodes.BTN_THUMBL,
+        'r3': ecodes.BTN_THUMBR,
+        'up': ecodes.BTN_DPAD_UP,
+        'down': ecodes.BTN_DPAD_DOWN,
+        'left': ecodes.BTN_DPAD_LEFT,
+        'right': ecodes.BTN_DPAD_RIGHT,
+    }
+
+    class PlayerGamepad:
+        def __init__(self, slot):
+            self.slot = slot
+            self.dpad_state = {'up': 0, 'down': 0, 'left': 0, 'right': 0}
+            self.stick_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
+            self.ui = evdev.UInput(
+                GAMEPAD_CAP,
+                name=f"Microsoft X-Box 360 pad (P{slot})",
+                vendor=0x045e,
+                product=0x028e,
+                version=0x0110
+            )
+            print(f"[GAMEPAD] Player {slot} registered at {self.ui.device.path}")
+
+        def handle_button(self, key, is_down):
+            val = 1 if is_down else 0
+            if key in BUTTON_MAP:
+                self.ui.write(ecodes.EV_KEY, BUTTON_MAP[key], val)
+                if key in self.dpad_state:
+                    self.dpad_state[key] = val
+                    hat_x = self.dpad_state['right'] - self.dpad_state['left']
+                    hat_y = self.dpad_state['down'] - self.dpad_state['up']
+                    self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0X, hat_x)
+                    self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0Y, hat_y)
+                if key == 'l2':
+                    self.ui.write(ecodes.EV_ABS, ecodes.ABS_Z, 255 if is_down else 0)
+                elif key == 'r2':
+                    self.ui.write(ecodes.EV_ABS, ecodes.ABS_RZ, 255 if is_down else 0)
+                self.ui.syn()
+            elif key in self.stick_state:
+                self.stick_state[key] = is_down
+                sx = 0
+                sy = 0
+                if self.stick_state['lleft']: sx -= 32767
+                if self.stick_state['lright']: sx += 32767
+                if self.stick_state['lup']: sy -= 32767
+                if self.stick_state['ldown']: sy += 32767
+                self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, sx)
+                self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, sy)
+                self.ui.syn()
+
+        def handle_stick(self, x, y):
+            cx = max(-1.0, min(1.0, float(x)))
+            cy = max(-1.0, min(1.0, float(y)))
+            val_x = int(cx * 32767)
+            val_y = int(cy * 32767)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, val_x)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, val_y)
+            self.ui.syn()
+
+        def close(self):
+            print(f"[GAMEPAD] Player {self.slot} disconnected")
+            self.ui.close()
+
+elif SYSTEM == "Darwin":
+    import ctypes
+    c = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+    c.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+    c.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+    c.CGEventKeyboardSetUnicodeString.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_uint16)]
+    c.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+
+    MAC_KEY_MAP = {
+        'up': (126, None),
+        'down': (125, None),
+        'left': (123, None),
+        'right': (124, None),
+        'triangle': (34, 'i'),
+        'circle': (37, 'l'),
+        'cross': (40, 'k'),
+        'square': (38, 'j'),
+        'l1': (12, 'q'),
+        'r1': (14, 'e'),
+        'l2': (18, '1'),
+        'r2': (20, '3'),
+        'l3': (19, '2'),
+        'r3': (21, '4'),
+        'select': (51, '\b'),
+        'start': (36, '\r'),
+        'lup': (13, 'w'),
+        'ldown': (1, 's'),
+        'lleft': (0, 'a'),
+        'lright': (2, 'd')
+    }
+
+    def mac_send_key(key_name, is_down):
+        if key_name in MAC_KEY_MAP:
+            code, char = MAC_KEY_MAP[key_name]
+            evt = c.CGEventCreateKeyboardEvent(None, code, is_down)
+            if evt:
+                if char:
+                    char_arr = (ctypes.c_uint16 * 1)(ord(char))
+                    c.CGEventKeyboardSetUnicodeString(evt, 1, char_arr)
+                c.CGEventPost(0, evt)
+
+    class PlayerGamepad:
+        def __init__(self, slot):
+            self.slot = slot
+            self.analog_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
+            print(f"[GAMEPAD-MAC] Player {slot} connected (Keyboard emulation)")
+
+        def handle_button(self, key, is_down):
+            mac_send_key(key, is_down)
+
+        def handle_stick(self, x, y):
+            cx = max(-1.0, min(1.0, float(x)))
+            cy = max(-1.0, min(1.0, float(y)))
+            thresh = 0.35
+            dirs = {
+                'lleft': cx < -thresh,
+                'lright': cx > thresh,
+                'lup': cy < -thresh,
+                'ldown': cy > thresh
+            }
+            for d, state in dirs.items():
+                if state != self.analog_state[d]:
+                    self.analog_state[d] = state
+                    mac_send_key(d, state)
+
+        def close(self):
+            for d in list(self.analog_state.keys()):
+                if self.analog_state[d]:
+                    mac_send_key(d, False)
+            print(f"[GAMEPAD-MAC] Player {self.slot} disconnected")
+
 available_slots = [1, 2, 3, 4]
 slots_lock = threading.Lock()
-
-class PlayerGamepad:
-    def __init__(self, slot):
-        self.slot = slot
-        self.dpad_state = {'up': 0, 'down': 0, 'left': 0, 'right': 0}
-        self.stick_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
-        self.ui = evdev.UInput(
-            GAMEPAD_CAP,
-            name=f"Microsoft X-Box 360 pad (P{slot})",
-            vendor=0x045e,
-            product=0x028e,
-            version=0x0110
-        )
-        print(f"[GAMEPAD] Player {slot} registered at {self.ui.device.path}")
-
-    def handle_button(self, key, is_down):
-        val = 1 if is_down else 0
-        if key in BUTTON_MAP:
-            self.ui.write(ecodes.EV_KEY, BUTTON_MAP[key], val)
-            if key in self.dpad_state:
-                self.dpad_state[key] = val
-                hat_x = self.dpad_state['right'] - self.dpad_state['left']
-                hat_y = self.dpad_state['down'] - self.dpad_state['up']
-                self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0X, hat_x)
-                self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0Y, hat_y)
-            if key == 'l2':
-                self.ui.write(ecodes.EV_ABS, ecodes.ABS_Z, 255 if is_down else 0)
-            elif key == 'r2':
-                self.ui.write(ecodes.EV_ABS, ecodes.ABS_RZ, 255 if is_down else 0)
-            self.ui.syn()
-        elif key in self.stick_state:
-            self.stick_state[key] = is_down
-            sx = 0
-            sy = 0
-            if self.stick_state['lleft']: sx -= 32767
-            if self.stick_state['lright']: sx += 32767
-            if self.stick_state['lup']: sy -= 32767
-            if self.stick_state['ldown']: sy += 32767
-            self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, sx)
-            self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, sy)
-            self.ui.syn()
-
-    def handle_stick(self, x, y):
-        cx = max(-1.0, min(1.0, float(x)))
-        cy = max(-1.0, min(1.0, float(y)))
-        val_x = int(cx * 32767)
-        val_y = int(cy * 32767)
-        self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, val_x)
-        self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, val_y)
-        self.ui.syn()
-
-    def close(self):
-        print(f"[GAMEPAD] Player {self.slot} disconnected")
-        self.ui.close()
 
 HTML_CONTENT = f"""<!DOCTYPE html>
 <html lang="es">
@@ -117,7 +225,7 @@ HTML_CONTENT = f"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Gamepad Thinkpad</title>
+<title>Gamepad ({SYSTEM})</title>
 <style>
 * {{
     box-sizing: border-box;
@@ -166,18 +274,31 @@ html, body {{
     background: #10b981;
     box-shadow: 0 0 10px #10b981;
 }}
+.hdr-btns {{
+    display: flex;
+    gap: 8px;
+}}
 .fs-btn {{
     background: #2563eb;
     border: none;
     color: #fff;
-    padding: 8px 16px;
+    padding: 8px 14px;
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
 }}
-.fs-btn:active {{
-    background: #1d4ed8;
+.qr-btn {{
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #cbd5e1;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
 }}
 .triggers {{
     display: flex;
@@ -318,7 +439,10 @@ html, body {{
         <div id="dot" class="status-dot"></div>
         <span id="stext">Conectando...</span>
     </div>
-    <button id="fs-btn" class="fs-btn">Pantalla Completa</button>
+    <div class="hdr-btns">
+        <a href="/qr" class="qr-btn" id="qr-btn">QR</a>
+        <button id="fs-btn" class="fs-btn">Pantalla Completa</button>
+    </div>
 </div>
 
 <div class="triggers">
@@ -370,14 +494,14 @@ function connect() {{
     ws = new WebSocket('ws://' + host + ':' + WS_PORT);
     ws.onopen = () => {{
         dot.classList.add('online');
-        stext.textContent = 'Conectado...';
+        stext.textContent = 'Conectado ({SYSTEM})';
     }};
     ws.onmessage = (e) => {{
         try {{
             const msg = JSON.parse(e.data);
             if (msg.type === 'init') {{
                 const p = msg.player;
-                stext.textContent = 'Jugador ' + p;
+                stext.textContent = 'Jugador ' + p + ' ({SYSTEM})';
                 const colors = ['#38bdf8', '#f43f5e', '#10b981', '#fbbf24'];
                 const col = colors[p - 1] || '#10b981';
                 dot.style.background = col;
@@ -427,7 +551,7 @@ function getKeyElementFromPoint(x, y) {{
 }}
 
 window.addEventListener('touchstart', (e) => {{
-    if (e.target.closest('#fs-btn')) return;
+    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn')) return;
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {{
         const t = e.changedTouches[i];
@@ -450,7 +574,7 @@ window.addEventListener('touchstart', (e) => {{
 }}, {{ passive: false }});
 
 window.addEventListener('touchmove', (e) => {{
-    if (e.target.closest('#fs-btn')) return;
+    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn')) return;
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {{
         const t = e.changedTouches[i];
@@ -461,7 +585,7 @@ window.addEventListener('touchmove', (e) => {{
 }}, {{ passive: false }});
 
 function handleEnd(e) {{
-    if (e.target.closest('#fs-btn')) return;
+    if (e.target.closest('#fs-btn') || e.target.closest('#qr-btn')) return;
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {{
         const t = e.changedTouches[i];
@@ -535,6 +659,98 @@ fsBtn.addEventListener('touchend', toggleFS);
 </html>
 """
 
+QR_PAGE_CONTENT = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Escanear Gamepad ({SYSTEM})</title>
+<style>
+body {{
+    background: #090a10;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+    box-sizing: border-box;
+    text-align: center;
+}}
+.card {{
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px;
+    padding: 30px;
+    max-width: 360px;
+    width: 100%;
+}}
+h1 {{
+    font-size: 20px;
+    margin-bottom: 8px;
+}}
+p {{
+    color: #94a3b8;
+    font-size: 13px;
+    margin-bottom: 24px;
+}}
+.qr-box {{
+    background: #fff;
+    padding: 16px;
+    border-radius: 14px;
+    display: inline-block;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}}
+.qr-box img {{
+    width: 200px;
+    height: 200px;
+    display: block;
+}}
+.links {{
+    margin-top: 24px;
+    font-size: 12px;
+    color: #38bdf8;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}}
+.links a {{
+    color: inherit;
+    text-decoration: none;
+}}
+.btn-back {{
+    margin-top: 20px;
+    display: inline-block;
+    background: #2563eb;
+    color: #fff;
+    text-decoration: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 13px;
+}}
+</style>
+</head>
+<body>
+<div class="card">
+    <h1>Conectar Gamepad</h1>
+    <p>Escanea con la cámara de tu celular para abrir el control.</p>
+    <div class="qr-box">
+        <img src="/qr.png" alt="Código QR Gamepad">
+    </div>
+    <div class="links">
+        <a href="{LOCAL_URL}">{LOCAL_URL}</a>
+        <a href="{MDNS_URL}">{MDNS_URL}</a>
+    </div>
+    <a href="/" class="btn-back">Abrir Control Aquí</a>
+</div>
+</body>
+</html>
+"""
+
 class HTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.send_response(200)
@@ -542,10 +758,26 @@ class HTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(HTML_CONTENT.encode("utf-8"))
+        if self.path == "/qr":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(QR_PAGE_CONTENT.encode("utf-8"))
+        elif self.path == "/qr.png":
+            if os.path.exists(QR_PATH):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.end_headers()
+                with open(QR_PATH, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(HTML_CONTENT.encode("utf-8"))
 
     def log_message(self, *args):
         pass
@@ -575,7 +807,7 @@ async def ws_handler(websocket):
     try:
         player = PlayerGamepad(slot)
     except Exception as e:
-        print(f"[GAMEPAD ERR] Cannot create uinput for Player {slot}: {e}")
+        print(f"[GAMEPAD ERR] Cannot create backend for Player {slot}: {e}")
         with slots_lock:
             available_slots.insert(0, slot)
             available_slots.sort()
@@ -616,7 +848,22 @@ async def start_ws():
     async with websockets.serve(ws_handler, "0.0.0.0", WS_PORT):
         await asyncio.Future()
 
+def print_banner():
+    print("=" * 45)
+    print(f" Touch Gamepad Server ({SYSTEM})")
+    print(f" URL Wi-Fi:   {LOCAL_URL}")
+    print(f" URL Bonjour: {MDNS_URL}")
+    print(f" Página QR:   {LOCAL_URL}/qr")
+    print("=" * 45)
+    try:
+        res = subprocess.run(["qrencode", "-t", "UTF8", LOCAL_URL], capture_output=True, text=True)
+        if res.returncode == 0:
+            print(res.stdout)
+    except Exception:
+        pass
+
 if __name__ == "__main__":
+    print_banner()
     t = threading.Thread(target=start_http, daemon=True)
     t.start()
     try:
