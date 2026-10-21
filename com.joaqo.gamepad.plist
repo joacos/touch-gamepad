@@ -6,9 +6,9 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/python3</string>
-    <string>/Users/joaqo/repos/touch-gamepad/server.py</string>
+    <string>/Users/joaqo/workspace/projects/touch-gamepad/server.py</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/joaqo/repos/touch-gamepad</string>
+  <key>WorkingDirectory</key><string>/Users/joaqo/workspace/projects/touch-gamepad</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PYTHONUNBUFFERED</key><string>1</string>

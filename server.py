@@ -209,9 +209,9 @@ elif SYSTEM == "Darwin":
                 if key in self.release_timers:
                     timer = self.release_timers.pop(key)
                     timer.cancel()
-                    mac_send_key(key, False)
+                else:
+                    mac_send_key(key, True)
                 self.press_times[key] = time.time()
-                mac_send_key(key, True)
             else:
                 elapsed = time.time() - self.press_times.get(key, 0)
                 min_hold = 0.08  # 80ms min hold for emulator frame sampling
@@ -760,15 +760,18 @@ window.addEventListener('touchmove', (e) => {{
         }} else if (activeTouches.has(t.identifier)) {{
             const entry = activeTouches.get(t.identifier);
             const btn = getKeyElementFromPoint(t.clientX, t.clientY);
+            const isDpad = ['up', 'down', 'left', 'right'].includes(entry.key);
             if (btn !== entry.btn) {{
-                entry.btn.classList.remove('active');
-                emitKey(entry.key, false);
                 if (btn) {{
                     const newKey = btn.getAttribute('data-key');
+                    entry.btn.classList.remove('active');
+                    emitKey(entry.key, false);
                     btn.classList.add('active');
                     activeTouches.set(t.identifier, {{ key: newKey, btn }});
                     emitKey(newKey, true);
-                }} else {{
+                }} else if (isDpad) {{
+                    entry.btn.classList.remove('active');
+                    emitKey(entry.key, false);
                     activeTouches.delete(t.identifier);
                 }}
             }}
