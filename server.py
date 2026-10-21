@@ -12,7 +12,7 @@ from evdev import ecodes, AbsInfo
 HTTP_PORT = int(os.environ.get("HTTP_PORT", 8765))
 WS_PORT = int(os.environ.get("WS_PORT", 8766))
 
-# Define virtual Xbox 360 controller
+# Define virtual Xbox 360 controller capabilities
 GAMEPAD_CAP = {
     ecodes.EV_KEY: [
         ecodes.BTN_A, ecodes.BTN_B, ecodes.BTN_X, ecodes.BTN_Y,
@@ -33,20 +33,6 @@ GAMEPAD_CAP = {
     ]
 }
 
-try:
-    ui = evdev.UInput(
-        GAMEPAD_CAP,
-        name="Microsoft X-Box 360 pad",
-        vendor=0x045e,
-        product=0x028e,
-        version=0x0110
-    )
-    print(f"[GAMEPAD] Created Linux virtual joystick at {ui.device.path}")
-except Exception as err:
-    print(f"[FATAL] Cannot create UInput device: {err}")
-    print("Ensure user is in 'input' group or run with appropriate permissions.")
-    sys.exit(1)
-
 BUTTON_MAP = {
     'cross': ecodes.BTN_A,
     'circle': ecodes.BTN_B,
@@ -66,45 +52,63 @@ BUTTON_MAP = {
     'right': ecodes.BTN_DPAD_RIGHT,
 }
 
-dpad_state = {'up': 0, 'down': 0, 'left': 0, 'right': 0}
-stick_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
+# Player slot management (1-4)
+available_slots = [1, 2, 3, 4]
+slots_lock = threading.Lock()
 
-def handle_button(key, is_down):
-    val = 1 if is_down else 0
-    if key in BUTTON_MAP:
-        ui.write(ecodes.EV_KEY, BUTTON_MAP[key], val)
-        if key in dpad_state:
-            dpad_state[key] = val
-            hat_x = dpad_state['right'] - dpad_state['left']
-            hat_y = dpad_state['down'] - dpad_state['up']
-            ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0X, hat_x)
-            ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0Y, hat_y)
-        if key == 'l2':
-            ui.write(ecodes.EV_ABS, ecodes.ABS_Z, 255 if is_down else 0)
-        elif key == 'r2':
-            ui.write(ecodes.EV_ABS, ecodes.ABS_RZ, 255 if is_down else 0)
-        ui.syn()
-    elif key in stick_state:
-        # Fallback for digital directional stick events
-        stick_state[key] = is_down
-        sx = 0
-        sy = 0
-        if stick_state['lleft']: sx -= 32767
-        if stick_state['lright']: sx += 32767
-        if stick_state['lup']: sy -= 32767
-        if stick_state['ldown']: sy += 32767
-        ui.write(ecodes.EV_ABS, ecodes.ABS_X, sx)
-        ui.write(ecodes.EV_ABS, ecodes.ABS_Y, sy)
-        ui.syn()
+class PlayerGamepad:
+    def __init__(self, slot):
+        self.slot = slot
+        self.dpad_state = {'up': 0, 'down': 0, 'left': 0, 'right': 0}
+        self.stick_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
+        self.ui = evdev.UInput(
+            GAMEPAD_CAP,
+            name=f"Microsoft X-Box 360 pad (P{slot})",
+            vendor=0x045e,
+            product=0x028e,
+            version=0x0110
+        )
+        print(f"[GAMEPAD] Player {slot} registered at {self.ui.device.path}")
 
-def handle_stick(x, y):
-    cx = max(-1.0, min(1.0, float(x)))
-    cy = max(-1.0, min(1.0, float(y)))
-    val_x = int(cx * 32767)
-    val_y = int(cy * 32767)
-    ui.write(ecodes.EV_ABS, ecodes.ABS_X, val_x)
-    ui.write(ecodes.EV_ABS, ecodes.ABS_Y, val_y)
-    ui.syn()
+    def handle_button(self, key, is_down):
+        val = 1 if is_down else 0
+        if key in BUTTON_MAP:
+            self.ui.write(ecodes.EV_KEY, BUTTON_MAP[key], val)
+            if key in self.dpad_state:
+                self.dpad_state[key] = val
+                hat_x = self.dpad_state['right'] - self.dpad_state['left']
+                hat_y = self.dpad_state['down'] - self.dpad_state['up']
+                self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0X, hat_x)
+                self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0Y, hat_y)
+            if key == 'l2':
+                self.ui.write(ecodes.EV_ABS, ecodes.ABS_Z, 255 if is_down else 0)
+            elif key == 'r2':
+                self.ui.write(ecodes.EV_ABS, ecodes.ABS_RZ, 255 if is_down else 0)
+            self.ui.syn()
+        elif key in self.stick_state:
+            self.stick_state[key] = is_down
+            sx = 0
+            sy = 0
+            if self.stick_state['lleft']: sx -= 32767
+            if self.stick_state['lright']: sx += 32767
+            if self.stick_state['lup']: sy -= 32767
+            if self.stick_state['ldown']: sy += 32767
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, sx)
+            self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, sy)
+            self.ui.syn()
+
+    def handle_stick(self, x, y):
+        cx = max(-1.0, min(1.0, float(x)))
+        cy = max(-1.0, min(1.0, float(y)))
+        val_x = int(cx * 32767)
+        val_y = int(cy * 32767)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, val_x)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, val_y)
+        self.ui.syn()
+
+    def close(self):
+        print(f"[GAMEPAD] Player {self.slot} disconnected")
+        self.ui.close()
 
 HTML_CONTENT = f"""<!DOCTYPE html>
 <html lang="es">
@@ -366,10 +370,28 @@ function connect() {{
     ws = new WebSocket('ws://' + host + ':' + WS_PORT);
     ws.onopen = () => {{
         dot.classList.add('online');
-        stext.textContent = 'Gamepad Conectado';
+        stext.textContent = 'Conectado...';
+    }};
+    ws.onmessage = (e) => {{
+        try {{
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'init') {{
+                const p = msg.player;
+                stext.textContent = 'Jugador ' + p;
+                const colors = ['#38bdf8', '#f43f5e', '#10b981', '#fbbf24'];
+                const col = colors[p - 1] || '#10b981';
+                dot.style.background = col;
+                dot.style.boxShadow = '0 0 10px ' + col;
+            }} else if (msg.type === 'full') {{
+                stext.textContent = 'Servidor lleno';
+                dot.classList.remove('online');
+            }}
+        }} catch(err) {{}}
     }};
     ws.onclose = () => {{
         dot.classList.remove('online');
+        dot.style.background = '#ef4444';
+        dot.style.boxShadow = 'none';
         stext.textContent = 'Reconectando...';
         setTimeout(connect, 1000);
     }};
@@ -535,25 +557,59 @@ def start_http():
 
 async def ws_handler(websocket):
     client_ip = websocket.remote_address[0] if websocket.remote_address else "unknown"
-    print(f"[WS] Client connected from {client_ip}")
+    slot = None
+    with slots_lock:
+        if available_slots:
+            slot = available_slots.pop(0)
+
+    if not slot:
+        print(f"[WS] Rejecting {client_ip}: Server full (max 4 players)")
+        try:
+            await websocket.send(json.dumps({"type": "full", "message": "Servidor lleno"}))
+            await websocket.close()
+        except Exception:
+            pass
+        return
+
+    player = None
     try:
+        player = PlayerGamepad(slot)
+    except Exception as e:
+        print(f"[GAMEPAD ERR] Cannot create uinput for Player {slot}: {e}")
+        with slots_lock:
+            available_slots.insert(0, slot)
+            available_slots.sort()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        return
+
+    print(f"[WS] Client connected from {client_ip} as Player {slot}")
+    try:
+        await websocket.send(json.dumps({"type": "init", "player": slot}))
         async for message in websocket:
             try:
                 data = json.loads(message)
                 mtype = data.get("type")
                 if mtype == "stick":
-                    handle_stick(data.get("x", 0), data.get("y", 0))
+                    player.handle_stick(data.get("x", 0), data.get("y", 0))
                 else:
                     key = data.get("key")
                     down = data.get("down", False)
                     if key:
-                        handle_button(key, down)
+                        player.handle_button(key, down)
             except Exception as e:
-                print(f"[WS JSON ERR] {e}")
+                print(f"[WS JSON ERR] P{slot}: {e}")
     except Exception as e:
-        print(f"[WS CLIENT ERR] {e}")
+        print(f"[WS CLIENT ERR] P{slot}: {e}")
     finally:
-        print(f"[WS] Client disconnected from {client_ip}")
+        if player:
+            player.close()
+        with slots_lock:
+            available_slots.append(slot)
+            available_slots.sort()
+        print(f"[WS] Player {slot} disconnected ({client_ip})")
 
 async def start_ws():
     print(f"[WS] Listening on ws://0.0.0.0:{WS_PORT}")
@@ -567,4 +623,3 @@ if __name__ == "__main__":
         asyncio.run(start_ws())
     except KeyboardInterrupt:
         print("\n[SERVER] Shutting down...")
-        ui.close()
