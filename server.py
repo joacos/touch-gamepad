@@ -192,6 +192,7 @@ elif SYSTEM == "Darwin":
             code = MAC_KEY_MAP[key_name]
             evt = c.CGEventCreateKeyboardEvent(None, code, is_down)
             if evt:
+                c.CGEventSetFlags(evt, 0)
                 c.CGEventPost(0, evt)  # kCGHIDEventTap
                 cf.CFRelease(evt)
 
@@ -199,38 +200,11 @@ elif SYSTEM == "Darwin":
         def __init__(self, slot):
             self.slot = slot
             self.analog_state = {'lup': False, 'ldown': False, 'lleft': False, 'lright': False}
-            self.press_times = {}
-            self.release_timers = {}
             print(f"[GAMEPAD-MAC] Player {slot} connected (Keyboard emulation)")
 
         def handle_button(self, key, is_down):
             print(f"[KEY-MAC] {key} down={is_down}", flush=True)
-            if is_down:
-                if key in self.release_timers:
-                    timer = self.release_timers.pop(key)
-                    timer.cancel()
-                else:
-                    mac_send_key(key, True)
-                self.press_times[key] = time.time()
-            else:
-                elapsed = time.time() - self.press_times.get(key, 0)
-                min_hold = 0.08  # 80ms min hold for emulator frame sampling
-                if elapsed < min_hold:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        t = loop.call_later(min_hold - elapsed, self._delayed_release, key)
-                    except RuntimeError:
-                        t = threading.Timer(min_hold - elapsed, self._delayed_release, args=[key])
-                        t.start()
-                    self.release_timers[key] = t
-                else:
-                    self.press_times.pop(key, None)
-                    mac_send_key(key, False)
-
-        def _delayed_release(self, key):
-            self.release_timers.pop(key, None)
-            self.press_times.pop(key, None)
-            mac_send_key(key, False)
+            mac_send_key(key, is_down)
 
         def handle_stick(self, x, y):
             cx = max(-1.0, min(1.0, float(x)))
@@ -248,16 +222,10 @@ elif SYSTEM == "Darwin":
                     mac_send_key(d, state)
 
         def close(self):
-            for t in list(self.release_timers.values()):
-                t.cancel()
-            self.release_timers.clear()
-            for k in list(self.press_times.keys()):
+            for k in list(MAC_KEY_MAP.keys()):
                 mac_send_key(k, False)
-            self.press_times.clear()
             for d in list(self.analog_state.keys()):
-                if self.analog_state[d]:
-                    mac_send_key(d, False)
-                    self.analog_state[d] = False
+                self.analog_state[d] = False
             print(f"[GAMEPAD-MAC] Player {self.slot} disconnected")
 
 available_slots = [1, 2, 3, 4]
@@ -717,6 +685,43 @@ modeBtn.addEventListener('pointerdown', toggleMode);
 setLeftMode(currentMode);
 
 const activeTouches = new Map();
+let dpadTouchId = null;
+let currentDpadKey = null;
+
+function getDpadKey(x, y) {{
+    const rect = dpadView.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = x - cx;
+    const dy = y - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 15 || dist > rect.width * 0.9) return null;
+    if (Math.abs(dx) > Math.abs(dy)) {{
+        return dx > 0 ? 'right' : 'left';
+    }} else {{
+        return dy > 0 ? 'down' : 'up';
+    }}
+}}
+
+function updateDpadHighlight(key) {{
+    document.querySelectorAll('.dpad-btn').forEach(btn => {{
+        if (btn.getAttribute('data-key') === key) {{
+            btn.classList.add('active');
+        }} else {{
+            btn.classList.remove('active');
+        }}
+    }});
+}}
+
+function handleDpadMove(t) {{
+    const key = getDpadKey(t.clientX, t.clientY);
+    if (key !== currentDpadKey) {{
+        if (currentDpadKey) emitKey(currentDpadKey, false);
+        if (key) emitKey(key, true);
+        currentDpadKey = key;
+        updateDpadHighlight(key);
+    }}
+}}
 
 function getKeyElementFromPoint(x, y) {{
     const el = document.elementFromPoint(x, y);
@@ -738,6 +743,14 @@ window.addEventListener('touchstart', (e) => {{
                 handleAnalogMove(t);
                 continue;
             }}
+        }} else {{
+            const dRect = dpadView.getBoundingClientRect();
+            if (t.clientX >= dRect.left && t.clientX <= dRect.right &&
+                t.clientY >= dRect.top && t.clientY <= dRect.bottom) {{
+                dpadTouchId = t.identifier;
+                handleDpadMove(t);
+                continue;
+            }}
         }}
 
         const btn = getKeyElementFromPoint(t.clientX, t.clientY);
@@ -757,32 +770,8 @@ window.addEventListener('touchmove', (e) => {{
         const t = e.changedTouches[i];
         if (t.identifier === analogTouchId) {{
             handleAnalogMove(t);
-        }} else if (activeTouches.has(t.identifier)) {{
-            const entry = activeTouches.get(t.identifier);
-            const btn = getKeyElementFromPoint(t.clientX, t.clientY);
-            const isDpad = ['up', 'down', 'left', 'right'].includes(entry.key);
-            if (btn !== entry.btn) {{
-                if (btn) {{
-                    const newKey = btn.getAttribute('data-key');
-                    entry.btn.classList.remove('active');
-                    emitKey(entry.key, false);
-                    btn.classList.add('active');
-                    activeTouches.set(t.identifier, {{ key: newKey, btn }});
-                    emitKey(newKey, true);
-                }} else if (isDpad) {{
-                    entry.btn.classList.remove('active');
-                    emitKey(entry.key, false);
-                    activeTouches.delete(t.identifier);
-                }}
-            }}
-        }} else {{
-            const btn = getKeyElementFromPoint(t.clientX, t.clientY);
-            if (btn) {{
-                const key = btn.getAttribute('data-key');
-                btn.classList.add('active');
-                activeTouches.set(t.identifier, {{ key, btn }});
-                emitKey(key, true);
-            }}
+        }} else if (t.identifier === dpadTouchId) {{
+            handleDpadMove(t);
         }}
     }}
 }}, {{ passive: false }});
@@ -794,6 +783,14 @@ function handleEnd(e) {{
         const t = e.changedTouches[i];
         if (t.identifier === analogTouchId) {{
             resetAnalog();
+        }}
+        if (t.identifier === dpadTouchId) {{
+            if (currentDpadKey) {{
+                emitKey(currentDpadKey, false);
+                currentDpadKey = null;
+            }}
+            updateDpadHighlight(null);
+            dpadTouchId = null;
         }}
         if (activeTouches.has(t.identifier)) {{
             const entry = activeTouches.get(t.identifier);
